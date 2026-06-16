@@ -1,83 +1,191 @@
 import { prisma } from "@/lib/prisma";
 import { getCompanionPlant, toCompanionSlug } from "@/lib/plant-companion";
 
-// A few notes for learning:
-// - Top-level resolvers (Query/Mutation) are the entry points.
-// - The per-type resolvers below (Garden.beds, Bed.plants, etc.) only run when
-//   the client actually asks for those fields. That's the core idea of GraphQL:
-//   the client picks the shape, and each field is resolved on demand.
-// - This naive version can cause "N+1" queries on deeply nested lists. Once the
-//   basics click, swapping these for DataLoader is a great next exercise.
-
+// The GraphQL context carries the gardenerId from the authenticated session.
+// Resolvers that modify data require a valid gardenerId.
+type Context = { gardenerId?: string };
 type IdArg = { id: string };
+
+function requireAuth(ctx: Context): string {
+  if (!ctx.gardenerId) throw new Error("Not authenticated");
+  return ctx.gardenerId;
+}
 
 export const resolvers = {
   Query: {
-    gardens: () => prisma.garden.findMany({ orderBy: { createdAt: "desc" } }),
-    garden: (_p: unknown, { id }: IdArg) =>
-      prisma.garden.findUnique({ where: { id } }),
+    me: (_p: unknown, _a: unknown, ctx: Context) =>
+      ctx.gardenerId
+        ? prisma.gardener.findUnique({ where: { id: ctx.gardenerId } })
+        : null,
+
+    // Scoped to the authenticated gardener
+    gardens: (_p: unknown, _a: unknown, ctx: Context) =>
+      ctx.gardenerId
+        ? prisma.garden.findMany({
+            where: { gardenerId: ctx.gardenerId },
+            orderBy: { createdAt: "desc" },
+          })
+        : [],
+
+    garden: (_p: unknown, { id }: IdArg, ctx: Context) =>
+      ctx.gardenerId
+        ? prisma.garden.findFirst({ where: { id, gardenerId: ctx.gardenerId } })
+        : null,
+
     plant: (_p: unknown, { id }: IdArg) =>
       prisma.plant.findUnique({ where: { id } }),
   },
 
   Mutation: {
+    // ── Gardens ──────────────────────────────────────────────────────────────
     createGarden: (
       _p: unknown,
-      { input }: { input: { name: string; location?: string; gardenerId: string } }
-    ) =>
-      prisma.garden.create({
-        data: {
-          name: input.name,
-          location: input.location,
-          gardener: { connect: { id: input.gardenerId } },
-        },
-      }),
+      { input }: { input: { name: string; location?: string } },
+      ctx: Context
+    ) => {
+      const gardenerId = requireAuth(ctx);
+      return prisma.garden.create({
+        data: { name: input.name, location: input.location, gardenerId },
+      });
+    },
 
+    updateGarden: (
+      _p: unknown,
+      { id, input }: { id: string; input: { name?: string; location?: string } },
+      ctx: Context
+    ) => {
+      requireAuth(ctx);
+      return prisma.garden.update({
+        where: { id },
+        data: { name: input.name ?? undefined, location: input.location ?? undefined },
+      });
+    },
+
+    deleteGarden: async (_p: unknown, { id }: IdArg, ctx: Context) => {
+      requireAuth(ctx);
+      await prisma.garden.delete({ where: { id } });
+      return true;
+    },
+
+    // ── Beds ─────────────────────────────────────────────────────────────────
     createBed: (
       _p: unknown,
-      { input }: { input: { name: string; sizeSqFt?: number; gardenId: string } }
-    ) =>
-      prisma.bed.create({
+      { input }: { input: { name: string; sizeSqFt?: number; gardenId: string } },
+      ctx: Context
+    ) => {
+      requireAuth(ctx);
+      return prisma.bed.create({
         data: {
           name: input.name,
           sizeSqFt: input.sizeSqFt,
           garden: { connect: { id: input.gardenId } },
         },
-      }),
+      });
+    },
 
+    updateBed: (
+      _p: unknown,
+      { id, input }: { id: string; input: { name?: string; sizeSqFt?: number } },
+      ctx: Context
+    ) => {
+      requireAuth(ctx);
+      return prisma.bed.update({
+        where: { id },
+        data: { name: input.name ?? undefined, sizeSqFt: input.sizeSqFt ?? undefined },
+      });
+    },
+
+    deleteBed: async (_p: unknown, { id }: IdArg, ctx: Context) => {
+      requireAuth(ctx);
+      await prisma.bed.delete({ where: { id } });
+      return true;
+    },
+
+    // ── Plants ────────────────────────────────────────────────────────────────
     createPlant: (
       _p: unknown,
-      { input }: { input: { name: string; species?: string; bedId: string } }
-    ) =>
-      prisma.plant.create({
+      { input }: { input: { name: string; species?: string; bedId: string } },
+      ctx: Context
+    ) => {
+      requireAuth(ctx);
+      return prisma.plant.create({
         data: {
           name: input.name,
           species: input.species,
           bed: { connect: { id: input.bedId } },
         },
-      }),
+      });
+    },
 
+    updatePlant: (
+      _p: unknown,
+      { id, input }: { id: string; input: { name?: string; species?: string; status?: string } },
+      ctx: Context
+    ) => {
+      requireAuth(ctx);
+      return prisma.plant.update({
+        where: { id },
+        data: {
+          name: input.name ?? undefined,
+          species: input.species ?? undefined,
+          status: (input.status as never) ?? undefined,
+        },
+      });
+    },
+
+    deletePlant: async (_p: unknown, { id }: IdArg, ctx: Context) => {
+      requireAuth(ctx);
+      await prisma.plant.delete({ where: { id } });
+      return true;
+    },
+
+    // ── Observations ──────────────────────────────────────────────────────────
     addObservation: (
       _p: unknown,
-      {
-        input,
-      }: {
-        input: { plantId: string; note: string; type?: string; heightCm?: number };
-      }
-    ) =>
-      prisma.observation.create({
+      { input }: { input: { plantId: string; note: string; type?: string; heightCm?: number } },
+      ctx: Context
+    ) => {
+      requireAuth(ctx);
+      return prisma.observation.create({
         data: {
           note: input.note,
           type: (input.type as never) ?? "GENERAL",
           heightCm: input.heightCm,
           plant: { connect: { id: input.plantId } },
         },
-      }),
+      });
+    },
+
+    updateObservation: (
+      _p: unknown,
+      { id, input }: { id: string; input: { note?: string; type?: string; heightCm?: number } },
+      ctx: Context
+    ) => {
+      requireAuth(ctx);
+      return prisma.observation.update({
+        where: { id },
+        data: {
+          note: input.note ?? undefined,
+          type: (input.type as never) ?? undefined,
+          heightCm: input.heightCm ?? undefined,
+        },
+      });
+    },
+
+    deleteObservation: async (_p: unknown, { id }: IdArg, ctx: Context) => {
+      requireAuth(ctx);
+      await prisma.observation.delete({ where: { id } });
+      return true;
+    },
 
     updatePlantStatus: (
       _p: unknown,
-      { id, status }: { id: string; status: string }
-    ) => prisma.plant.update({ where: { id }, data: { status: status as never } }),
+      { id, status }: { id: string; status: string },
+      ctx: Context
+    ) => {
+      requireAuth(ctx);
+      return prisma.plant.update({ where: { id }, data: { status: status as never } });
+    },
   },
 
   // Field-level resolvers for relations.
@@ -97,8 +205,6 @@ export const resolvers = {
         where: { plantId: parent.id },
         orderBy: { createdAt: "desc" },
       }),
-    // Looks up the plant in the An Incomplete Gardening Companion dataset by
-    // converting the species field to a slug. Returns null on no match.
     companion: (parent: { species: string | null }) => {
       const slug = toCompanionSlug(parent.species);
       if (!slug) return null;

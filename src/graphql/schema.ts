@@ -75,15 +75,21 @@ export const typeDefs = gql`
   }
 
   type Query {
+    me: Gardener
     gardens: [Garden!]!
     garden(id: ID!): Garden
     plant(id: ID!): Plant
   }
 
+  # gardenerId removed — comes from the authenticated session
   input CreateGardenInput {
     name: String!
     location: String
-    gardenerId: ID!
+  }
+
+  input UpdateGardenInput {
+    name: String
+    location: String
   }
 
   input CreateBedInput {
@@ -92,10 +98,21 @@ export const typeDefs = gql`
     gardenId: ID!
   }
 
+  input UpdateBedInput {
+    name: String
+    sizeSqFt: Float
+  }
+
   input CreatePlantInput {
     name: String!
     species: String
     bedId: ID!
+  }
+
+  input UpdatePlantInput {
+    name: String
+    species: String
+    status: PlantStatus
   }
 
   input AddObservationInput {
@@ -105,11 +122,29 @@ export const typeDefs = gql`
     heightCm: Float
   }
 
+  input UpdateObservationInput {
+    note: String
+    type: ObservationType
+    heightCm: Float
+  }
+
   type Mutation {
     createGarden(input: CreateGardenInput!): Garden!
+    updateGarden(id: ID!, input: UpdateGardenInput!): Garden!
+    deleteGarden(id: ID!): Boolean!
+
     createBed(input: CreateBedInput!): Bed!
+    updateBed(id: ID!, input: UpdateBedInput!): Bed!
+    deleteBed(id: ID!): Boolean!
+
     createPlant(input: CreatePlantInput!): Plant!
+    updatePlant(id: ID!, input: UpdatePlantInput!): Plant!
+    deletePlant(id: ID!): Boolean!
+
     addObservation(input: AddObservationInput!): Observation!
+    updateObservation(id: ID!, input: UpdateObservationInput!): Observation!
+    deleteObservation(id: ID!): Boolean!
+
     updatePlantStatus(id: ID!, status: PlantStatus!): Plant!
   }
 `;

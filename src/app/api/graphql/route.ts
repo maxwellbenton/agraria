@@ -6,17 +6,19 @@ import type { NextRequest } from "next/server";
 
 import { typeDefs } from "@/graphql/schema";
 import { resolvers } from "@/graphql/resolvers";
+import { auth } from "@/auth";
 
 const server = new ApolloServer({ typeDefs, resolvers });
 
 const _handler = startServerAndCreateNextHandler<NextRequest>(server, {
-  context: async (req) => ({ req }),
+  context: async (req) => {
+    // auth() reads the session cookie — works in route handlers in next-auth v5.
+    const session = await auth();
+    return { req, gardenerId: session?.gardenerId };
+  },
 });
 
 // Cast to satisfy Next.js 16's strict App Router route handler types.
-// startServerAndCreateNextHandler returns an overloaded function that covers
-// both Pages Router and App Router; Next.js 16 only accepts the App Router
-// signature here.
 const handler = _handler as (req: NextRequest) => Promise<Response>;
 
 export { handler as GET, handler as POST };
