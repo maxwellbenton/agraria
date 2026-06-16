@@ -3,18 +3,19 @@
 import { ApolloServer } from "@apollo/server";
 import { startServerAndCreateNextHandler } from "@as-integrations/next";
 import type { NextRequest } from "next/server";
+import { getToken } from "next-auth/jwt";
 
 import { typeDefs } from "@/graphql/schema";
 import { resolvers } from "@/graphql/resolvers";
-import { auth } from "@/auth";
 
 const server = new ApolloServer({ typeDefs, resolvers });
 
 const _handler = startServerAndCreateNextHandler<NextRequest>(server, {
   context: async (req) => {
-    // auth() reads the session cookie — works in route handlers in next-auth v5.
-    const session = await auth();
-    return { req, gardenerId: session?.gardenerId };
+    // getToken reads the JWT directly from the request cookies — more reliable
+    // than auth() inside a third-party handler wrapper.
+    const token = await getToken({ req, secret: process.env.AUTH_SECRET });
+    return { req, gardenerId: token?.gardenerId as string | undefined };
   },
 });
 

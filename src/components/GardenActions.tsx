@@ -31,7 +31,7 @@ export function CreateGardenButton() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
-  const [createGarden, { loading }] = useMutation(CREATE_GARDEN);
+  const [createGarden, { loading, error }] = useMutation(CREATE_GARDEN);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -51,6 +51,7 @@ export function CreateGardenButton() {
         <form onSubmit={handleSubmit} className="space-y-3">
           <Input placeholder="Garden name" value={name} onChange={e => setName(e.target.value)} required autoFocus />
           <Input placeholder="Location (optional)" value={location} onChange={e => setLocation(e.target.value)} />
+          {error && <p className="text-sm text-destructive">{error.message}</p>}
           <DialogFooter>
             <Button type="submit" disabled={loading}>{loading ? "Creating…" : "Create"}</Button>
           </DialogFooter>
