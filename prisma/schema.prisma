@@ -1,0 +1,79 @@
+// Prisma 7 schema.
+// Note the generator provider is now "prisma-client" (not "prisma-client-js")
+// and an explicit output path is required.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Gardener {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  gardens   Garden[]
+  createdAt DateTime @default(now())
+}
+
+model Garden {
+  id         String   @id @default(cuid())
+  name       String
+  location   String?
+  gardener   Gardener @relation(fields: [gardenerId], references: [id], onDelete: Cascade)
+  gardenerId String
+  beds       Bed[]
+  createdAt  DateTime @default(now())
+}
+
+model Bed {
+  id        String   @id @default(cuid())
+  name      String
+  sizeSqFt  Float?
+  garden    Garden   @relation(fields: [gardenId], references: [id], onDelete: Cascade)
+  gardenId  String
+  plants    Plant[]
+  createdAt DateTime @default(now())
+}
+
+model Plant {
+  id           String        @id @default(cuid())
+  name         String
+  species      String?
+  status       PlantStatus   @default(PLANTED)
+  plantedOn    DateTime      @default(now())
+  bed          Bed           @relation(fields: [bedId], references: [id], onDelete: Cascade)
+  bedId        String
+  observations Observation[]
+  createdAt    DateTime      @default(now())
+}
+
+model Observation {
+  id        String          @id @default(cuid())
+  note      String
+  type      ObservationType @default(GENERAL)
+  heightCm  Float?
+  plant     Plant           @relation(fields: [plantId], references: [id], onDelete: Cascade)
+  plantId   String
+  createdAt DateTime        @default(now())
+}
+
+enum PlantStatus {
+  PLANTED
+  SPROUTING
+  FLOWERING
+  FRUITING
+  HARVESTED
+  REMOVED
+}
+
+enum ObservationType {
+  GENERAL
+  WATERING
+  FERTILIZING
+  PEST
+  HARVEST
+}
