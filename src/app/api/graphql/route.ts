@@ -1,25 +1,67 @@
 // The GraphQL endpoint lives at /api/graphql.
-// @as-integrations/next bridges Apollo Server 5 to Next.js route handlers.
-import { ApolloServer } from "@apollo/server";
-import { startServerAndCreateNextHandler } from "@as-integrations/next";
+//
+// We implement the route handler directly (without startServerAndCreateNextHandler)
+// so that auth() is called at the top of the route handler where Next.js's
+// cookie/header context is guaranteed to be available.
+import { ApolloServer, HeaderMap } from "@apollo/server";
 import type { NextRequest } from "next/server";
-import { getToken } from "next-auth/jwt";
+import { auth } from "@/auth";
 
 import { typeDefs } from "@/graphql/schema";
 import { resolvers } from "@/graphql/resolvers";
 
 const server = new ApolloServer({ typeDefs, resolvers });
+server.startInBackgroundHandlingStartupErrorsByLoggingAndFailingAllRequests();
 
-const _handler = startServerAndCreateNextHandler<NextRequest>(server, {
-  context: async (req) => {
-    // getToken reads the JWT directly from the request cookies — more reliable
-    // than auth() inside a third-party handler wrapper.
-    const token = await getToken({ req, secret: process.env.AUTH_SECRET });
-    return { req, gardenerId: token?.gardenerId as string | undefined };
-  },
-});
+async function handler(req: NextRequest): Promise<Response> {
+  // auth() is called here — at route handler scope — where Next.js async
+  // context (cookies, headers) is always set up correctly.
+  const session = await auth();
+  const gardenerId = session?.gardenerId;
 
-// Cast to satisfy Next.js 16's strict App Router route handler types.
-const handler = _handler as (req: NextRequest) => Promise<Response>;
+  // Forward all incoming headers to Apollo.
+  const inHeaders = new HeaderMap();
+  req.headers.forEach((value, key) => inHeaders.set(key, value));
+
+  // Parse the request body (JSON for mutations/queries, text fallback).
+  let body: unknown;
+  const contentType = req.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    body = await req.json();
+  } else {
+    body = await req.text();
+  }
+
+  const httpResponse = await server.executeHTTPGraphQLRequest({
+    httpGraphQLRequest: {
+      method: req.method,
+      headers: inHeaders,
+      body,
+      search: new URL(req.url).search,
+    },
+    context: async () => ({ gardenerId }),
+  });
+
+  const outHeaders = new Headers();
+  for (const [key, value] of httpResponse.headers) {
+    outHeaders.set(key, value);
+  }
+
+  let responseBody: string;
+  if (httpResponse.body.kind === "complete") {
+    responseBody = httpResponse.body.string;
+  } else {
+    const chunks: string[] = [];
+    for await (const chunk of httpResponse.body.asyncIterator) {
+      chunks.push(chunk);
+    }
+    responseBody = chunks.join("");
+  }
+
+  return new Response(responseBody, {
+    status: httpResponse.status ?? 200,
+    headers: outHeaders,
+  });
+}
 
 export { handler as GET, handler as POST };
