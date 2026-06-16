@@ -12,6 +12,7 @@ import {
   ApolloClient,
   InMemoryCache,
 } from "@apollo/client-integration-nextjs";
+import { headers } from "next/headers";
 
 function graphqlEndpoint(): string {
   if (process.env.GRAPHQL_ENDPOINT) return process.env.GRAPHQL_ENDPOINT;
@@ -20,9 +21,17 @@ function graphqlEndpoint(): string {
   return "http://127.0.0.1:3000/api/graphql";
 }
 
-export const { getClient, query, PreloadQuery } = registerApolloClient(() => {
+export const { getClient, query, PreloadQuery } = registerApolloClient(async () => {
+  // Forward the incoming request's Cookie header so the GraphQL route handler
+  // can call auth() and get the session (and thus gardenerId) for the current user.
+  const incomingHeaders = await headers();
+  const cookie = incomingHeaders.get("cookie") ?? "";
+
   return new ApolloClient({
     cache: new InMemoryCache(),
-    link: new HttpLink({ uri: graphqlEndpoint() }),
+    link: new HttpLink({
+      uri: graphqlEndpoint(),
+      headers: cookie ? { cookie } : {},
+    }),
   });
 });
