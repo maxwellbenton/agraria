@@ -4,6 +4,11 @@ import { query } from "@/lib/apollo-client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
+// Force dynamic rendering so Next.js doesn't try to statically pre-render
+// this page at build time (which would make an HTTP call to an API that
+// doesn't exist yet during the Vercel build).
+export const dynamic = "force-dynamic";
+
 // This is a Server Component. The GraphQL query runs on the server at request
 // time — no loading spinner needed, and no data-fetching code ships to the browser.
 const GARDENS_QUERY = gql`
