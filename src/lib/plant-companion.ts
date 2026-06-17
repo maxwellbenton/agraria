@@ -80,10 +80,47 @@ export type CompanionPlant = {
   supportedBySlugs: string[]; // slugs of plants that support this one
 };
 
+export type PlantSearchResult = {
+  slug: string;
+  fullName: string;    // scientific name → goes into species field
+  displayName: string; // common name (or scientific if none) → goes into name field
+};
+
 /**
- * Look up a plant in the lightweight index by its companion slug.
- * Returns null if not found or if the fetch fails.
+ * Search the lightweight index for plants matching the query string.
+ * Checks common names first, then full scientific names.
+ * Returns up to `limit` results.
  */
+export async function searchPlants(
+  q: string,
+  limit = 8
+): Promise<PlantSearchResult[]> {
+  if (!q.trim()) return [];
+  const index = await fetchIndex();
+  const lower = q.toLowerCase();
+  const results: PlantSearchResult[] = [];
+
+  for (const slug of index.plantIndex) {
+    const plant = index[slug];
+    if (!plant) continue;
+
+    const commonMatch = plant.c?.find((c) => c.toLowerCase().includes(lower));
+    const sciMatch = plant.f?.toLowerCase().includes(lower);
+
+    if (commonMatch || sciMatch) {
+      results.push({
+        slug,
+        fullName: plant.f ?? "",
+        displayName: commonMatch ?? plant.f ?? slug.replace(/-/g, " "),
+      });
+    }
+
+    if (results.length >= limit) break;
+  }
+
+  return results;
+}
+
 export async function getCompanionPlant(
   slug: string
 ): Promise<CompanionPlant | null> {

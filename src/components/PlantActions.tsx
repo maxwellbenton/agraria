@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { gql } from "@apollo/client";
 import { useMutation } from "@apollo/client/react";
 import { useRouter } from "next/navigation";
@@ -16,6 +16,7 @@ import {
   AlertDialogTitle, AlertDialogDescription, AlertDialogFooter,
   AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog";
+import type { PlantSearchResult } from "@/lib/plant-companion";
 
 const PLANT_STATUSES = ["PLANTED", "SPROUTING", "FLOWERING", "FRUITING", "HARVESTED", "REMOVED"];
 
@@ -23,6 +24,81 @@ const CREATE_PLANT  = gql`mutation CreatePlant($input: CreatePlantInput!) { crea
 const UPDATE_PLANT  = gql`mutation UpdatePlant($id: ID!, $input: UpdatePlantInput!) { updatePlant(id: $id, input: $input) { id } }`;
 const DELETE_PLANT  = gql`mutation DeletePlant($id: ID!) { deletePlant(id: $id) }`;
 const DELETE_OBS    = gql`mutation DeleteObservation($id: ID!) { deleteObservation(id: $id) }`;
+
+// ── Plant name autocomplete ───────────────────────────────────────────────────
+
+function PlantNameInput({
+  value,
+  onChange,
+  onSelectSuggestion,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onSelectSuggestion: (result: PlantSearchResult) => void;
+}) {
+  const [suggestions, setSuggestions] = useState<PlantSearchResult[]>([]);
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Debounced search
+  useEffect(() => {
+    if (value.length < 2) { setSuggestions([]); setOpen(false); return; }
+    const id = setTimeout(async () => {
+      const res = await fetch(`/api/plants/search?q=${encodeURIComponent(value)}`);
+      const data: PlantSearchResult[] = await res.json();
+      setSuggestions(data);
+      setOpen(data.length > 0);
+    }, 200);
+    return () => clearTimeout(id);
+  }, [value]);
+
+  // Close on outside click
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, []);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <Input
+        placeholder="Plant name (e.g. Cherry Tomato)"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        onFocus={() => suggestions.length > 0 && setOpen(true)}
+        required
+        autoFocus
+        autoComplete="off"
+      />
+      {open && (
+        <ul className="absolute z-50 top-full mt-1 w-full rounded-md border border-border bg-card shadow-lg overflow-hidden">
+          {suggestions.map((s) => (
+            <li key={s.slug}>
+              <button
+                type="button"
+                className="w-full text-left px-3 py-2 text-sm hover:bg-accent focus:bg-accent focus:outline-none"
+                onMouseDown={e => e.preventDefault()} // prevent input blur before click
+                onClick={() => {
+                  onSelectSuggestion(s);
+                  setOpen(false);
+                }}
+              >
+                <span className="font-medium">{s.displayName}</span>
+                {s.fullName && s.fullName !== s.displayName && (
+                  <span className="ml-2 text-muted-foreground italic text-xs">{s.fullName}</span>
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 // ── Create plant ──────────────────────────────────────────────────────────────
 
@@ -48,8 +124,19 @@ export function CreatePlantButton({ bedId }: { bedId: string }) {
       <DialogContent>
         <DialogHeader><DialogTitle>Add a plant</DialogTitle></DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-3">
-          <Input placeholder="Plant name (e.g. Cherry Tomato)" value={name} onChange={e => setName(e.target.value)} required autoFocus />
-          <Input placeholder="Species (e.g. Solanum lycopersicum)" value={species} onChange={e => setSpecies(e.target.value)} />
+          <PlantNameInput
+            value={name}
+            onChange={setName}
+            onSelectSuggestion={(s) => {
+              setName(s.displayName);
+              if (s.fullName) setSpecies(s.fullName);
+            }}
+          />
+          <Input
+            placeholder="Species (e.g. Solanum lycopersicum)"
+            value={species}
+            onChange={e => setSpecies(e.target.value)}
+          />
           <DialogFooter>
             <Button type="submit" disabled={loading}>{loading ? "Adding…" : "Add"}</Button>
           </DialogFooter>
