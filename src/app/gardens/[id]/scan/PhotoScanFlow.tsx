@@ -106,10 +106,22 @@ export function PhotoScanFlow({
         });
       });
 
-      mark({ status: "loading", message: "Encoding photo…" });
+      // Encoding runs the SAM vision encoder on the main thread (no
+      // progress events available, unlike the download above) and can take
+      // several seconds — long enough to visibly stall the page. Set the
+      // message, then yield one frame so the browser actually paints it
+      // before the blocking work starts; the spinner in SvgPanel keeps
+      // rendering after that and, if it does freeze mid-spin, the frozen
+      // frame itself is a clearer "still working" signal than static text.
+      mark({
+        status: "loading",
+        message: "Encoding photo… this can take several seconds and may briefly freeze the page",
+      });
+      await new Promise(requestAnimationFrame);
       await sam.encodeImage(canvas);
 
       mark({ status: "loading", message: "Segmenting…" });
+      await new Promise(requestAnimationFrame);
       const mask = await sam.segmentPoint(detection.centroid);
       const contour = traceBoundary(mask, canvas.width, canvas.height);
       const simplified = simplifyClosed(contour, TRACE_EPSILON);
@@ -246,7 +258,12 @@ export function PhotoScanFlow({
               New photo
             </Button>
           </div>
-          {detectStatus && <p className="text-sm text-muted-foreground mt-2">{detectStatus}</p>}
+          {detectStatus && (
+            <p className="text-sm text-muted-foreground mt-2 flex items-center gap-2">
+              {detecting && <Spinner />}
+              {detectStatus}
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -307,6 +324,32 @@ export function PhotoScanFlow({
   );
 }
 
+// ── Loading spinner ───────────────────────────────────────────────────────────
+// Pure CSS animation (Tailwind's `animate-spin`, a GPU-composited transform)
+// rather than anything driven by JS ticks/intervals. During encodeImage() the
+// main thread can be blocked for several seconds running the SAM vision
+// encoder, so a JS-driven indicator (e.g. a percentage counter) would just
+// sit frozen with no way to tell "stuck" from "not started". A CSS spinner
+// keeps animating right up until the thread actually blocks, and a frozen
+// mid-spin frame is itself a recognizable "the browser is busy" signal.
+function Spinner() {
+  return (
+    <svg
+      className="animate-spin h-4 w-4 text-muted-foreground shrink-0"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+      />
+    </svg>
+  );
+}
+
 // ── SVG preview/copy panel ────────────────────────────────────────────────────
 // Pulled into its own component so TypeScript narrows `state` to the "done"
 // variant (with a `svg` field) inside this function, rather than needing
@@ -331,7 +374,8 @@ function SvgPanel({ state }: { state: PlantSvgState }) {
   }
   if (state.status === "loading") {
     return (
-      <div className="rounded-lg border border-border p-3 bg-muted/30">
+      <div className="rounded-lg border border-border p-3 bg-muted/30 flex items-center gap-2">
+        <Spinner />
         <p className="text-xs text-muted-foreground">{state.message}</p>
       </div>
     );
