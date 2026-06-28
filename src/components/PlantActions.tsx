@@ -39,17 +39,50 @@ function PlantNameInput({
   const [suggestions, setSuggestions] = useState<PlantSearchResult[]>([]);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestSearchIdRef = useRef(0);
+  const suppressNextSearchRef = useRef(false);
 
   // Debounced search
   useEffect(() => {
-    if (value.length < 2) { setSuggestions([]); setOpen(false); return; }
-    const id = setTimeout(async () => {
-      const res = await fetch(`/api/plants/search?q=${encodeURIComponent(value)}`);
-      const data: PlantSearchResult[] = await res.json();
-      setSuggestions(data);
-      setOpen(data.length > 0);
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+
+    if (suppressNextSearchRef.current) {
+      suppressNextSearchRef.current = false;
+      return;
+    }
+
+    if (value.length < 2) {
+      setSuggestions([]);
+      setOpen(false);
+      return;
+    }
+
+    const searchId = ++latestSearchIdRef.current;
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/plants/search?q=${encodeURIComponent(value)}`);
+        const data: PlantSearchResult[] = await res.json();
+        // Ignore stale responses from older in-flight requests.
+        if (searchId !== latestSearchIdRef.current) return;
+        setSuggestions(data);
+        setOpen(data.length > 0);
+      } catch {
+        if (searchId !== latestSearchIdRef.current) return;
+        setSuggestions([]);
+        setOpen(false);
+      }
     }, 200);
-    return () => clearTimeout(id);
+
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+    };
   }, [value]);
 
   // Close on outside click
@@ -83,6 +116,13 @@ function PlantNameInput({
                 className="w-full text-left px-3 py-2 text-sm hover:bg-accent focus:bg-accent focus:outline-none"
                 onMouseDown={e => e.preventDefault()} // prevent input blur before click
                 onClick={() => {
+                  suppressNextSearchRef.current = true;
+                  latestSearchIdRef.current += 1;
+                  if (debounceRef.current) {
+                    clearTimeout(debounceRef.current);
+                    debounceRef.current = null;
+                  }
+                  setSuggestions([]);
                   onSelectSuggestion(s);
                   setOpen(false);
                 }}

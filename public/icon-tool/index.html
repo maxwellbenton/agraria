@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agraria — Plant Icon Tracer</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <h1>Plant Icon Tracer</h1>
+  <p class="subtitle">Upload a plant photo, click on the plant, and trace it into a simple SVG silhouette you can hand-finish into an icon.</p>
+
+  <div id="upload-section">
+    <div id="drop-zone">
+      <div class="icon">📷</div>
+      <p>Click or drag a plant photo here</p>
+      <small>A single plant, reasonably isolated, works best</small>
+    </div>
+    <input type="file" id="file-in" accept="image/*" class="hidden" aria-label="Upload image file">
+  </div>
+
+  <div id="work-section" class="hidden">
+    <div class="card">
+      <div class="card-title">1. Click on the plant</div>
+      <div class="card-sub">One click sets the point SAM will segment from. Click again anywhere to move it.</div>
+      <div class="canvas-wrap">
+        <canvas id="c-display"></canvas>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="run-btn" disabled>▶ Segment plant</button>
+        <button class="btn" id="reset-btn">↺ New photo</button>
+      </div>
+      <div class="msg" id="status-msg"></div>
+      <div class="prog-wrap hidden" id="prog-wrap"><div class="prog-fill" id="prog-fill"></div></div>
+    </div>
+
+    <div class="card hidden" id="result-card">
+      <div class="card-title">2. Adjust + export</div>
+      <div class="result-layout">
+        <div class="result-preview">
+          <div class="preview-label">Traced silhouette</div>
+          <div id="svg-preview"></div>
+        </div>
+        <div class="result-controls">
+          <div class="control-row">
+            <label for="epsilon-slider">Simplify (epsilon)</label>
+            <input type="range" id="epsilon-slider" min="0.5" max="5" step="0.1" value="1.6">
+            <span id="epsilon-val">1.6</span>
+          </div>
+          <div class="control-row">
+            <label for="smoothing-slider">Smoothing</label>
+            <input type="range" id="smoothing-slider" min="0" max="2" step="0.1" value="1.2">
+            <span id="smoothing-val">1.2</span>
+          </div>
+          <div class="control-row">
+            <label>Sampled color</label>
+            <div class="color-row">
+              <span class="color-swatch" id="color-swatch"></span>
+              <span id="color-hex">—</span>
+            </div>
+          </div>
+          <div class="control-row">
+            <label for="slug-input">File name</label>
+            <input type="text" id="slug-input" placeholder="e.g. strawberry">
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary" id="export-btn">⬇ Export SVG</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>
