@@ -5,6 +5,7 @@ import { query } from "@/lib/apollo-client";
 import { AddObservationForm } from "./AddObservationForm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { EditGardenButton } from "@/components/GardenActions";
 import {
   DeleteGardenButton, CreateBedButton,
@@ -124,7 +125,12 @@ export default async function GardenPage({
 
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-lg font-semibold">Beds</h2>
-        <CreateBedButton gardenId={garden.id} />
+        <div className="flex items-center gap-2">
+          <Link href={`/gardens/${garden.id}/scan`}>
+            <Button size="sm" variant="outline">📷 Scan photo</Button>
+          </Link>
+          <CreateBedButton gardenId={garden.id} />
+        </div>
       </div>
 
       {garden.beds.length === 0 && (
