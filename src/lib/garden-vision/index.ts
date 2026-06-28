@@ -15,6 +15,7 @@
 // confirms?) that haven't been made yet.
 export { HeuristicImageToMapPipeline } from "./heuristic-pipeline";
 export { ClassicalGeometryEngine } from "./geometry-engine";
+export { detectSinglePlant } from "./single-plant";
 export type {
   CameraGeometryResult,
   GroundPlaneTransform,

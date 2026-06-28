@@ -1,31 +1,36 @@
 "use client";
 
-// Photo-scan suggestion flow.
+// Photo-scan suggestion flow — single plant per photo.
 //
-// 1. Upload/take a photo → run the existing garden-vision heuristic pipeline
-//    (src/lib/garden-vision) to detect plant-shaped blobs.
-// 2. Each detection becomes a frontend-only "suggestion" — never written to
-//    the database until the user explicitly clicks "Add to garden" for that
-//    plant. All detected plants are grouped under one suggested Bed (default
-//    name "Bed 1"), which the user must create first (so plants have
-//    somewhere to attach to) and can rename before creating.
-// 3. Optional: "Generate plant icons (SVG)" reuses the SAM-based tracer from
+// 1. Upload/take a close-up photo of one plant → detectSinglePlant()
+//    (src/lib/garden-vision/single-plant.ts) finds the plant's centroid and
+//    bounding box. Unlike the multi-blob heuristic pipeline (built for wide
+//    shots of a whole bed), this always returns exactly one detection — a
+//    close-up photo's disconnected leaf/stem blobs are treated as one plant
+//    instead of several.
+// 2. The detection becomes a frontend-only "suggestion" (default name
+//    "Plant 1", editable name/species) — nothing is written to the database
+//    until the user picks an existing bed from the dropdown and clicks "Add
+//    to garden". Bed *creation* isn't part of this flow; pick one of the
+//    garden's existing beds (create one from the garden page first if there
+//    are none yet).
+// 3. Optional: "Generate plant icon (SVG)" reuses the SAM-based tracer from
 //    public/icon-tool (ported, typed, in src/lib/icon-trace) — instead of a
-//    manual click-to-prompt point, it uses each detection's already-known
-//    centroid as the point prompt. Generated SVGs are shown with a copyable
-//    code block; they are NOT saved anywhere automatically — this is an
-//    exploratory step for reviewing icons to possibly save for broader use
-//    later, not a final icon pipeline.
+//    manual click, it uses the detection's centroid as the point prompt.
+//    The generated SVG is shown with a copyable code block; it is NOT saved
+//    anywhere automatically — this is an exploratory step for reviewing
+//    icons to possibly save for broader use later.
 
 import { useRef, useState, useCallback } from "react";
 import { gql } from "@apollo/client";
 import { useMutation } from "@apollo/client/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  createGardenVisionPipeline,
+  detectSinglePlant,
   type PlantInstanceDetection,
 } from "@/lib/garden-vision";
 import {
@@ -38,11 +43,10 @@ import {
   rgbToHex,
 } from "@/lib/icon-trace";
 
-const MAX_DIM = 1600; // cap getImageData size; the pipeline downsamples internally anyway
+const MAX_DIM = 1600; // cap getImageData size
 const TRACE_EPSILON = 2;
 const TRACE_SMOOTHING = 1;
 
-const CREATE_BED = gql`mutation CreateBed($input: CreateBedInput!) { createBed(input: $input) { id } }`;
 const CREATE_PLANT = gql`mutation CreatePlant($input: CreatePlantInput!) { createPlant(input: $input) { id } }`;
 
 type PlantSvgState =
@@ -52,7 +56,6 @@ type PlantSvgState =
   | { status: "done"; svg: string };
 
 type PlantSuggestion = {
-  key: string;
   name: string;
   species: string;
   detection: PlantInstanceDetection;
@@ -61,7 +64,11 @@ type PlantSuggestion = {
   adding: boolean;
 };
 
-export function PhotoScanFlow({ gardenId }: { gardenId: string }) {
+export function PhotoScanFlow({
+  beds,
+}: {
+  beds: { id: string; name: string }[];
+}) {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -69,79 +76,64 @@ export function PhotoScanFlow({ gardenId }: { gardenId: string }) {
 
   const [detecting, setDetecting] = useState(false);
   const [detectStatus, setDetectStatus] = useState<string | null>(null);
-  const [plants, setPlants] = useState<PlantSuggestion[] | null>(null);
+  const [plant, setPlant] = useState<PlantSuggestion | null>(null);
 
-  const [bedName, setBedName] = useState("Bed 1");
-  const [bedId, setBedId] = useState<string | null>(null);
+  const [bedId, setBedId] = useState<string>(beds[0]?.id ?? "");
 
-  const [generateSvgs, setGenerateSvgs] = useState(false);
+  const [generateSvg, setGenerateSvg] = useState(false);
 
-  const [createBed, { loading: creatingBed }] = useMutation(CREATE_BED);
   const [createPlant] = useMutation(CREATE_PLANT);
 
-  function patchPlant(key: string, patch: Partial<PlantSuggestion>) {
-    setPlants((prev) => prev?.map((p) => (p.key === key ? { ...p, ...patch } : p)) ?? prev);
+  function patchPlant(patch: Partial<PlantSuggestion>) {
+    setPlant((prev) => (prev ? { ...prev, ...patch } : prev));
   }
 
-  const generateAllSvgs = useCallback(async (targets: PlantSuggestion[]) => {
+  const generateOneSvg = useCallback(async (detection: PlantInstanceDetection) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const mark = (key: string, svg: PlantSvgState) =>
-      setPlants((prev) => prev?.map((p) => (p.key === key ? { ...p, svg } : p)) ?? prev);
+    const mark = (svg: PlantSvgState) => setPlant((prev) => (prev ? { ...prev, svg } : prev));
 
-    for (const p of targets) mark(p.key, { status: "loading", message: "Waiting…" });
-
+    mark({ status: "loading", message: "Waiting…" });
     try {
       if (!samRef.current) samRef.current = new SamSegmenter();
       const sam = samRef.current;
 
       await sam.loadModel((progress) => {
-        for (const p of targets) {
-          mark(p.key, {
-            status: "loading",
-            message: `Downloading SAM model: ${progress.pct}% (${progress.loadedMB.toFixed(0)} / ${progress.totalMB.toFixed(0)} MB, cached after first use)`,
-          });
-        }
+        mark({
+          status: "loading",
+          message: `Downloading SAM model: ${progress.pct}% (${progress.loadedMB.toFixed(0)} / ${progress.totalMB.toFixed(0)} MB, cached after first use)`,
+        });
       });
 
-      for (const p of targets) mark(p.key, { status: "loading", message: "Encoding photo…" });
+      mark({ status: "loading", message: "Encoding photo…" });
       await sam.encodeImage(canvas);
+
+      mark({ status: "loading", message: "Segmenting…" });
+      const mask = await sam.segmentPoint(detection.centroid);
+      const contour = traceBoundary(mask, canvas.width, canvas.height);
+      const simplified = simplifyClosed(contour, TRACE_EPSILON);
+      const path = polygonToSmoothPath(simplified, TRACE_SMOOTHING);
 
       const ctx = canvas.getContext("2d");
       const rgba = ctx?.getImageData(0, 0, canvas.width, canvas.height).data;
-
-      for (const p of targets) {
-        mark(p.key, { status: "loading", message: "Segmenting…" });
-        try {
-          const mask = await sam.segmentPoint(p.detection.centroid);
-          const contour = traceBoundary(mask, canvas.width, canvas.height);
-          const simplified = simplifyClosed(contour, TRACE_EPSILON);
-          const path = polygonToSmoothPath(simplified, TRACE_SMOOTHING);
-          const color = rgba
-            ? averageColor(rgba, mask, canvas.width, canvas.height)
-            : { r: 100, g: 140, b: 90 };
-          const fill = rgbToHex(color);
-          const stroke = rgbToHex(darken(color, 0.35));
-          const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${canvas.width} ${canvas.height}">\n  <path d="${path}" fill="${fill}" stroke="${stroke}" stroke-width="3"/>\n</svg>`;
-          mark(p.key, { status: "done", svg });
-        } catch (err) {
-          mark(p.key, { status: "error", message: err instanceof Error ? err.message : String(err) });
-        }
-      }
+      const color = rgba
+        ? averageColor(rgba, mask, canvas.width, canvas.height)
+        : { r: 100, g: 140, b: 90 };
+      const fill = rgbToHex(color);
+      const stroke = rgbToHex(darken(color, 0.35));
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${canvas.width} ${canvas.height}">\n  <path d="${path}" fill="${fill}" stroke="${stroke}" stroke-width="3"/>\n</svg>`;
+      mark({ status: "done", svg });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      for (const p of targets) mark(p.key, { status: "error", message });
+      mark({ status: "error", message: err instanceof Error ? err.message : String(err) });
     }
   }, []);
 
   function onFile(file: File) {
     const url = URL.createObjectURL(file);
     setImgUrl(url);
-    setPlants(null);
+    setPlant(null);
     setDetectStatus(null);
-    setBedId(null);
-    setBedName("Bed 1");
     canvasRef.current = null;
   }
 
@@ -164,25 +156,21 @@ export function PhotoScanFlow({ gardenId }: { gardenId: string }) {
       canvasRef.current = canvas;
 
       const { data } = ctx.getImageData(0, 0, w, h);
-      const pipeline = createGardenVisionPipeline();
-      const result = await pipeline.analyze(data, w, h);
+      const detection = detectSinglePlant(data, w, h);
 
-      const suggestions: PlantSuggestion[] = result.detections.map((detection, i) => ({
-        key: `plant-${i}`,
-        name: `Plant ${i + 1}`,
+      const suggestion: PlantSuggestion = {
+        name: "Plant 1",
         species: "",
         detection,
         svg: { status: "idle" },
         added: false,
         adding: false,
-      }));
-      setPlants(suggestions);
-      setDetectStatus(
-        `${suggestions.length} plant${suggestions.length === 1 ? "" : "s"} detected · geometry confidence ${(result.geometry.confidence * 100).toFixed(0)}%`,
-      );
+      };
+      setPlant(suggestion);
+      setDetectStatus(`Plant detected · confidence ${(detection.confidence * 100).toFixed(0)}%`);
 
-      if (generateSvgs && suggestions.length > 0) {
-        void generateAllSvgs(suggestions);
+      if (generateSvg) {
+        void generateOneSvg(detection);
       }
     } catch (err) {
       setDetectStatus(`Error: ${err instanceof Error ? err.message : String(err)}`);
@@ -191,36 +179,26 @@ export function PhotoScanFlow({ gardenId }: { gardenId: string }) {
     }
   }
 
-  function toggleGenerateSvgs(checked: boolean) {
-    setGenerateSvgs(checked);
-    if (checked && plants && plants.length > 0) {
-      void generateAllSvgs(plants);
+  function toggleGenerateSvg(checked: boolean) {
+    setGenerateSvg(checked);
+    if (checked && plant) {
+      void generateOneSvg(plant.detection);
     }
   }
 
-  async function handleCreateBed() {
-    const res = await createBed({ variables: { input: { gardenId, name: bedName } } });
-    const id = (res.data as { createBed: { id: string } } | null | undefined)?.createBed?.id;
-    if (id) setBedId(id);
-  }
-
-  async function handleAddPlant(key: string) {
-    if (!bedId || !plants) return;
-    const plant = plants.find((p) => p.key === key);
-    if (!plant) return;
-    patchPlant(key, { adding: true });
+  async function handleAddPlant() {
+    if (!bedId || !plant) return;
+    patchPlant({ adding: true });
     await createPlant({
       variables: { input: { bedId, name: plant.name, species: plant.species || undefined } },
     });
-    patchPlant(key, { adding: false, added: true });
+    patchPlant({ adding: false, added: true });
   }
 
   function reset() {
     setImgUrl(null);
-    setPlants(null);
+    setPlant(null);
     setDetectStatus(null);
-    setBedId(null);
-    setBedName("Bed 1");
     canvasRef.current = null;
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
@@ -243,26 +221,26 @@ export function PhotoScanFlow({ gardenId }: { gardenId: string }) {
               onClick={() => fileInputRef.current?.click()}
               className="w-full border-2 border-dashed border-border rounded-lg py-10 text-center text-sm text-muted-foreground hover:bg-accent/40 transition-colors"
             >
-              Click to take or upload a garden photo
+              Click to take or upload a close-up photo of one plant
             </button>
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={imgUrl} alt="Uploaded garden photo" className="rounded-lg max-h-80 mx-auto" />
+            <img src={imgUrl} alt="Uploaded plant photo" className="rounded-lg max-h-80 mx-auto" />
           )}
 
           <label className="flex items-center gap-2 mt-4 text-sm">
             <input
               type="checkbox"
-              checked={generateSvgs}
-              onChange={(e) => toggleGenerateSvgs(e.target.checked)}
+              checked={generateSvg}
+              onChange={(e) => toggleGenerateSvg(e.target.checked)}
               className="h-4 w-4 rounded border-input"
             />
-            Generate plant icons (SVG) for each detected plant
+            Generate plant icon (SVG)
           </label>
 
           <div className="flex gap-2 mt-3">
             <Button onClick={runDetection} disabled={!imgUrl || detecting}>
-              {detecting ? "Analyzing…" : "Detect plants & beds"}
+              {detecting ? "Analyzing…" : "Detect plant"}
             </Button>
             <Button variant="outline" onClick={reset} disabled={!imgUrl}>
               New photo
@@ -272,71 +250,59 @@ export function PhotoScanFlow({ gardenId }: { gardenId: string }) {
         </CardContent>
       </Card>
 
-      {plants && (
+      {plant && (
         <Card>
-          <CardContent className="p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium">Suggested bed</p>
-              {bedId ? (
-                <span className="text-xs text-muted-foreground">Created ✓</span>
-              ) : (
-                <Button size="sm" onClick={handleCreateBed} disabled={creatingBed || !bedName.trim()}>
-                  {creatingBed ? "Creating…" : "Create bed"}
-                </Button>
-              )}
-            </div>
-            <Input
-              value={bedName}
-              onChange={(e) => setBedName(e.target.value)}
-              disabled={!!bedId}
-              placeholder="Bed name"
-            />
-            {!bedId && (
-              <p className="text-xs text-muted-foreground">
-                All plants detected in this photo are grouped under one bed — create it, then add
-                the plants you want below. Nothing is saved until you do.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {plants?.map((plant) => (
-        <Card key={plant.key}>
           <CardContent className="p-5 space-y-3">
             <div className="flex flex-wrap items-center gap-2">
               <Input
                 value={plant.name}
-                onChange={(e) => patchPlant(plant.key, { name: e.target.value })}
+                onChange={(e) => patchPlant({ name: e.target.value })}
                 disabled={plant.added}
                 className="flex-1 min-w-40"
                 placeholder="Plant name"
               />
               <Input
                 value={plant.species}
-                onChange={(e) => patchPlant(plant.key, { species: e.target.value })}
+                onChange={(e) => patchPlant({ species: e.target.value })}
                 disabled={plant.added}
                 className="flex-1 min-w-40"
                 placeholder="Species (optional)"
               />
-              <Button
-                size="sm"
-                onClick={() => handleAddPlant(plant.key)}
-                disabled={!bedId || plant.added || plant.adding}
-                title={!bedId ? "Create the bed above first" : undefined}
-              >
-                {plant.added ? "Added ✓" : plant.adding ? "Adding…" : "Add to garden"}
-              </Button>
             </div>
+
+            {beds.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                This garden has no beds yet — go back and create one before adding a plant.
+              </p>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <Select
+                  value={bedId}
+                  onChange={(e) => setBedId(e.target.value)}
+                  disabled={plant.added}
+                  className="flex-1 min-w-40"
+                >
+                  {beds.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </Select>
+                <Button onClick={handleAddPlant} disabled={!bedId || plant.added || plant.adding}>
+                  {plant.added ? "Added ✓" : plant.adding ? "Adding…" : "Add to garden"}
+                </Button>
+              </div>
+            )}
+
             <p className="text-xs text-muted-foreground">
               Detected at ({Math.round(plant.detection.centroid.x)}, {Math.round(plant.detection.centroid.y)}) ·
               confidence {(plant.detection.confidence * 100).toFixed(0)}%
             </p>
 
-            {generateSvgs && <SvgPanel state={plant.svg} />}
+            {generateSvg && <SvgPanel state={plant.svg} />}
           </CardContent>
         </Card>
-      ))}
+      )}
     </div>
   );
 }

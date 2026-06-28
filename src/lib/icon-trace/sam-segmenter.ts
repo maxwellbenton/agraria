@@ -23,6 +23,7 @@ const TRANSFORMERS_URL =
 // import without adding it as a build-time dependency.
 type TensorLike = { data: ArrayLike<number> };
 type SamProcessorOutput = {
+  pixel_values: unknown;
   original_sizes: unknown;
   reshaped_input_sizes: unknown;
   input_points?: unknown;
@@ -43,8 +44,12 @@ type SamProcessor = {
 };
 type SamModel = {
   get_image_embeddings: (inputs: SamProcessorOutput) => Promise<{ image_embeddings: unknown }>;
-  (inputs: { image_embeddings: unknown; input_points: unknown; input_labels: unknown }):
-    Promise<SamModelOutput>;
+  (inputs: {
+    pixel_values: unknown;
+    image_embeddings: unknown;
+    input_points: unknown;
+    input_labels: unknown;
+  }): Promise<SamModelOutput>;
 };
 type TransformersModule = {
   env: { allowLocalModels: boolean };
@@ -141,7 +146,11 @@ export class SamSegmenter {
       input_points: [[[point.x, point.y]]],
       input_labels: [[[1]]],
     });
+    // The model's ONNX graph expects pixel_values even when image_embeddings
+    // is supplied (it just skips re-running the vision encoder) — omitting
+    // it fails with "Missing the following inputs: pixel_values."
     const outputs = await cachedModel({
+      pixel_values: promptInputs.pixel_values,
       image_embeddings: this.imageEmbeddings,
       input_points: promptInputs.input_points,
       input_labels: promptInputs.input_labels,

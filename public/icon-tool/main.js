@@ -233,7 +233,11 @@ async function runSAM() {
       input_points: [[[point.x, point.y]]],
       input_labels: [[[1]]],
     });
+    // The model's ONNX graph expects pixel_values even when image_embeddings
+    // is supplied (it just skips re-running the vision encoder) — omitting
+    // it fails with "Missing the following inputs: pixel_values."
     const outputs = await samModel({
+      pixel_values: promptInputs.pixel_values,
       image_embeddings: imageEmbeddings,
       input_points: promptInputs.input_points,
       input_labels: promptInputs.input_labels,
