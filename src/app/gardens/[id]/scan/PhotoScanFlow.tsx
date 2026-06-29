@@ -39,7 +39,6 @@ import {
   simplifyClosed,
   polygonToSmoothPath,
   averageColor,
-  darken,
   rgbToHex,
 } from "@/lib/icon-trace";
 
@@ -132,9 +131,11 @@ export function PhotoScanFlow({
       const color = rgba
         ? averageColor(rgba, mask, canvas.width, canvas.height)
         : { r: 100, g: 140, b: 90 };
-      const fill = rgbToHex(color);
-      const stroke = rgbToHex(darken(color, 0.35));
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${canvas.width} ${canvas.height}">\n  <path d="${path}" fill="${fill}" stroke="${stroke}" stroke-width="3"/>\n</svg>`;
+      // Outline only — a filled blob in a flat average color reads as a
+      // shapeless splotch, especially at icon size. An unfilled stroke in
+      // the detected color keeps the silhouette legible.
+      const stroke = rgbToHex(color);
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${canvas.width} ${canvas.height}">\n  <path d="${path}" fill="none" stroke="${stroke}" stroke-width="4" stroke-linejoin="round"/>\n</svg>`;
       mark({ status: "done", svg });
     } catch (err) {
       mark({ status: "error", message: err instanceof Error ? err.message : String(err) });

@@ -11,7 +11,6 @@ import {
   simplifyClosed,
   polygonToSmoothPath,
   averageColor,
-  darken,
   rgbToHex,
 } from "./trace-core.js";
 
@@ -303,12 +302,14 @@ function retrace() {
 
 function renderPreview() {
   if (!lastPathInfo || !lastColor) return;
-  const fill = rgbToHex(lastColor);
-  const stroke = rgbToHex(darken(lastColor, 0.35));
+  // Outline only, no fill — a flat-color blob reads as a shapeless splotch
+  // at icon size; an unfilled stroke in the detected color keeps the
+  // silhouette legible.
+  const stroke = rgbToHex(lastColor);
   const { path, w, h } = lastPathInfo;
-  els.svgPreview.innerHTML = `<svg viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg"><path d="${path}" fill="${fill}" stroke="${stroke}" stroke-width="3"/></svg>`;
-  els.colorSwatch.style.background = fill;
-  els.colorHex.textContent = fill;
+  els.svgPreview.innerHTML = `<svg viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg"><path d="${path}" fill="none" stroke="${stroke}" stroke-width="4" stroke-linejoin="round"/></svg>`;
+  els.colorSwatch.style.background = stroke;
+  els.colorHex.textContent = stroke;
 }
 
 // ---------------------------------------------------------------------------
@@ -328,10 +329,9 @@ function toSlug(s) {
 
 els.exportBtn.addEventListener("click", () => {
   if (!lastPathInfo || !lastColor) return;
-  const fill = rgbToHex(lastColor);
-  const stroke = rgbToHex(darken(lastColor, 0.35));
+  const stroke = rgbToHex(lastColor);
   const { path, w, h } = lastPathInfo;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">\n  <path d="${path}" fill="${fill}" stroke="${stroke}" stroke-width="3"/>\n</svg>\n`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">\n  <path d="${path}" fill="none" stroke="${stroke}" stroke-width="4" stroke-linejoin="round"/>\n</svg>\n`;
   const blob = new Blob([svg], { type: "image/svg+xml" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
